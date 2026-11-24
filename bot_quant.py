@@ -6,7 +6,7 @@ import requests
 from datetime import datetime, timezone, timedelta, date
 from zoneinfo import ZoneInfo
 
-VERSION = "1.0"
+VERSION = "1.0.1"
 
 # ==============================================================================
 # APEX QUANT SNOOKER
@@ -87,6 +87,12 @@ def api(params, est):
         return None
     if DIAG["permiso"] is False and not DIAG["api_ok"] and DIAG["api_error"] >= 4:
         return None      # snooker.org no nos deja entrar: no se insiste en este ciclo
+    # Sin la cabecera acordada y ya rechazados: solo se vuelve a probar cada 6 h (por cortesía con snooker.org)
+    neg = _fecha_utc(est.get("denegado"))
+    if not SNOOKER_ORG_HEADER and neg and (datetime.now(timezone.utc) - neg).total_seconds() < 6 * 3600:
+        DIAG["permiso"] = False
+        DIAG["ultimo_error"] = {"q": params, "st": "en pausa: esperando la cabecera de snooker.org", "desde": est.get("denegado")}
+        return None
     modos = [est.get("cabecera_ok")] if est.get("cabecera_ok") else (["secreto"] if SNOOKER_ORG_HEADER else ["ninguna", "generica"])
     for modo in modos:
         espera = PAUSA_API - (time.time() - _ultima_peticion[0])
@@ -107,6 +113,7 @@ def api(params, est):
                 if data is not None and not (isinstance(data, dict) and ("error" in {k.lower() for k in data})):
                     DIAG["api_ok"] += 1
                     DIAG["permiso"] = True
+                    est.pop("denegado", None)
                     DIAG["cabecera"] = modo
                     est["cabecera_ok"] = modo
                     if len(DIAG["muestras"]) < 6:
@@ -120,6 +127,7 @@ def api(params, est):
         DIAG["ultimo_error"] = {"q": params, "st": st, "cabecera": modo}
         if st in (401, 403, "200-error", "200-no-json") and DIAG["permiso"] is not True:
             DIAG["permiso"] = False
+            est["denegado"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         print(f"   ⚠️ snooker.org {params}: {st} (cabecera: {modo})")
         if est.get("cabecera_ok") and st in (401, 403):
             est.pop("cabecera_ok", None)   # la que valía ya no vale: la próxima vez se prueban todas
